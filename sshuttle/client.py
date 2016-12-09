@@ -16,6 +16,10 @@ from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
     resolvconf_nameservers
 from sshuttle.methods import get_method, Features
 
+import ipaddress
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
 
 
@@ -25,6 +29,7 @@ def got_signal(signum, frame):
 
 
 _pidname = None
+_acl_list = {}
 
 
 def check_daemon(pidfile):
@@ -329,6 +334,12 @@ def onaccept_tcp(listener, method, mux, handlers):
             raise
 
     dstip = method.get_tcp_dstip(sock)
+
+    if (_acl_list):
+        if not connection_is_allowed(dstip[0], str(dstip[1])):
+            sock.close()
+            return
+
     debug1('Accept TCP: %s:%r -> %s:%r.\n' % (srcip[0], srcip[1],
                                               dstip[0], dstip[1]))
     if dstip[1] == sock.getsockname()[1] and islocal(dstip[0], sock.family):
@@ -345,6 +356,52 @@ def onaccept_tcp(listener, method, mux, handlers):
     outwrap = MuxWrapper(mux, chan)
     handlers.append(Proxy(SockWrapper(sock, sock), outwrap))
     expire_connections(time.time(), mux)
+
+def port_in_range(port_range, port):
+
+    parsed_range = port_range.split("-")
+    port_start = parsed_range[0]
+    port_end = parsed_range[1]
+
+    if (port >= port_start and port <= port_end):
+        return True
+
+    return False
+
+def acl_entry_match(cidr, port):
+    if (cidr in _acl_list):
+        if (port in _acl_list[cidr]):
+            return True
+        for port_entry in _acl_list[cidr]:
+            if ("-" in port_entry):
+                if (port_in_range(port_entry, port)):
+                    return True
+
+    return False
+
+def connection_is_allowed(dstip, dstport):
+
+    # check for IP address rule
+    cidr = dstip + "/32"
+
+    if (acl_entry_match(cidr, dstport)):
+        return True
+
+    # check for global rule
+    cidr = "0.0.0.0/0"
+    if (acl_entry_match(cidr, dstport)):
+        return True
+
+    # check for subnet rule
+    for cidr_entry in _acl_list:
+        if (cidr_entry != "0.0.0.0/0" and int(cidr_entry.split("/")[1]) != 32):
+            network = ipaddress.ip_network(cidr_entry)
+            addr = ipaddress.ip_address(dstip)
+            if (addr in network.hosts()):
+                if (acl_entry_match(cidr_entry, dstport)):
+                    return True
+
+    return False
 
 
 def udp_done(chan, data, method, sock, dstip):
@@ -396,6 +453,101 @@ def ondns(listener, method, mux, handlers):
     mux.channels[chan] = lambda cmd, data: dns_done(
         chan, data, method, listener, srcip=dstip, dstip=srcip, mux=mux)
     expire_connections(now, mux)
+
+class AclHandler(FileSystemEventHandler):
+
+    def __init__(self, path):
+        self.acl_path = path
+        if (os.path.exists(path)):
+            self.file_exists = True
+
+    def reload_acl_list(self):
+        global _acl_list
+        _acl_list = {}
+        if (not self.file_exists):
+            return
+        with open(self.acl_path, 'r') as acl:
+            line_format = re.compile("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}\:\d{1,5}(\-\d{1,5})?$")
+            for line in acl:
+                try:
+                    line = line.strip()
+                    if (not line_format.match(line)):
+                        if (not line.startswith("#")):
+                            log("Invalid acl format [%s]. Should be w.x.y.z/nn:nnnnn-mmmmm\n" % line)
+                        continue
+
+                    acl = line.split(":")
+                    cidr = acl[0]
+                    port = acl[1]
+
+                    if (not cidr in _acl_list):
+                        _acl_list[cidr] = []
+                    if (not port in _acl_list[cidr]):
+                        _acl_list[cidr].append(port)
+                    else:
+                        log("Duplicate entry [%s]\n" % line)
+                except Exception as e:
+                    log("%s\n" % e)
+
+        if (not _acl_list):
+            log("ACL list is empty. Restricting all access\n")
+        else:
+            log("Network Connection ACL \n\n%s" % _acl_list)
+
+    def on_modified(self, event):
+        # ignore directory operations
+        if (event.is_directory):
+            return
+
+        if (event.src_path == self.acl_path):
+            self.reload_acl_list()
+
+    def on_moved(self, event):
+
+        if (event.dest_path == self.acl_path):
+            self.reload_acl_list()
+
+    def on_created(self, event):
+
+        if (self.file_exists):
+            # modifying a file triggers a create so no need
+            # to call the handler if the file already exists
+            return
+
+        if (event.src_path == self.acl_path):
+            self.file_exists = True
+
+        if (event.src_path == self.acl_path):
+            self.reload_acl_list()
+
+    def on_deleted(self, event):
+
+        if (event.src_path == self.acl_path):
+            self.file_exists = False
+
+        if (event.src_path == self.acl_path):
+            self.reload_acl_list()
+
+def start_acl_watchdog(acl_path):
+
+    #sudo pip install watchdog
+    #sudo pip install py2-ipaddress
+
+    if (not acl_path or acl_path == ""):
+        return
+
+    acl_dir = os.path.dirname(acl_path);
+
+    if (not os.path.exists(acl_dir)):
+        log("ACL file path does not exist [%s] ... Creating \n" % acl_dir)
+        os.mkdir(acl_path, 0755)
+
+    event_handler = AclHandler(acl_path)
+    observer = Observer()
+    observer.schedule(event_handler, path=acl_dir, recursive=False)
+    observer.start()
+
+    event_handler.reload_acl_list()
 
 
 def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
@@ -515,7 +667,7 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
 def main(listenip_v6, listenip_v4,
          ssh_cmd, remotename, python, latency_control, dns, nslist,
          method_name, seed_hosts, auto_nets,
-         subnets_include, subnets_exclude, daemon, pidfile):
+         subnets_include, subnets_exclude, acl_file, daemon, pidfile):
 
     if daemon:
         try:
@@ -704,6 +856,10 @@ def main(listenip_v6, listenip_v4,
     fw.setup(subnets_include, subnets_exclude, nslist,
              redirectport_v6, redirectport_v4, dnsport_v6, dnsport_v4,
              required.udp)
+
+    # start the watchdog for acl files
+    if (acl_file):
+        start_acl_watchdog(acl_file)
 
     # start the client process
     try:
