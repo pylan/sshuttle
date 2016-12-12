@@ -458,6 +458,7 @@ class AclHandler(FileSystemEventHandler):
 
     def __init__(self, path):
         self.acl_path = path
+        self.file_exists = False
         if (os.path.exists(path)):
             self.file_exists = True
 

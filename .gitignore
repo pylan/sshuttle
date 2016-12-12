@@ -5,3 +5,9 @@ sshuttle/version.py
 /.do_built
 /.do_built.dir
 /.redo
+.eggs/
+.idea/
+build/
+dist/
+sshuttle.egg-info/
+
