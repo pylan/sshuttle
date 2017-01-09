@@ -2,6 +2,7 @@ import socket
 from sshuttle.helpers import family_to_string
 from sshuttle.linux import ipt, ipt_ttl, ipt_chain_exists, nonfatal
 from sshuttle.methods import BaseMethod
+import netifaces as ni
 
 
 class Method(BaseMethod):
@@ -37,6 +38,14 @@ class Method(BaseMethod):
         _ipt('-F', chain)
         _ipt('-I', 'OUTPUT', '1', '-j', chain)
         _ipt('-I', 'PREROUTING', '1', '-j', chain)
+
+        # add a rule as the first entry to not route packets that are
+        # generated locally though sshuttle
+
+        ni.ifaddresses('eth0')
+        ip = ni.ifaddresses('eth0')[2][0]['addr']
+        _ipt('-A', chain, '-j', 'RETURN',
+             '--src', '%s/32' % ip)
 
         # create new subnet entries.  Note that we're sorting in a very
         # particular order: we need to go from most-specific (largest
