@@ -41,11 +41,14 @@ class Method(BaseMethod):
 
         # add a rule as the first entry to not route packets that are
         # generated locally though sshuttle
-
         ni.ifaddresses('eth0')
         ip = ni.ifaddresses('eth0')[2][0]['addr']
         _ipt('-A', chain, '-j', 'RETURN',
              '--src', '%s/32' % ip)
+
+        # add a rule to route requests to 1.0.0.0 to localhost
+        _ipt('-t', 'nat', '-A', 'PREROUTING', '-d', '1.0.0.0',  '-j', 'DNAT', 
+             '--to-destination', '127.0.0.1')
 
         # create new subnet entries.  Note that we're sorting in a very
         # particular order: we need to go from most-specific (largest
@@ -89,6 +92,10 @@ class Method(BaseMethod):
             return ipt_ttl(family, table, *args)
 
         chain = 'sshuttle-%s' % port
+
+        # remove rule to route requests to 1.0.0.0 to localhost
+        nonfatal(_ipt, '-D', 'PREROUTING', '-d', '1.0.0.0',  '-j', 'DNAT',
+                 '--to-destination', '127.0.0.1')
 
         # basic cleanup/setup of chains
         if ipt_chain_exists(family, table, chain):
