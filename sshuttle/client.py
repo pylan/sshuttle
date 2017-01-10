@@ -22,46 +22,6 @@ import ipaddress
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-class DomainName(str):
-    def __getattr__(self, item):
-        return DomainName(item + '.' + self)
-D = DomainName('microservices.vela.pythian.com.')
-
-# determine the private IP of the instance
-IP = '127.0.0.1'
-privateNetwork1 = ipaddress.ip_network(unicode('10.0.0.0/8'))
-privateNetwork2 = ipaddress.ip_network(unicode('172.16.0.0/12'))
-privateNetwork3 = ipaddress.ip_network(unicode('192.168.0.0/16'))
-
-for interface in netifaces.interfaces():
-    interfaceAddress = netifaces.ifaddresses(interface)
-    if netifaces.AF_INET in interfaceAddress and len(interfaceAddress[netifaces.AF_INET]) > 0 and 'addr' in interfaceAddress[netifaces.AF_INET][0]:
-        IP = netifaces.ifaddresses(interface)[netifaces.AF_INET][0]['addr']
-        singleIpNetwork = ipaddress.ip_network(unicode(IP + "/32"))
-        if singleIpNetwork.subnet_of(privateNetwork1) or singleIpNetwork.subnet_of(privateNetwork2) or singleIpNetwork.subnet_of(privateNetwork3):
-            break;
-
-TTL = 60 * 5
-soa_record = SOA(
-    mname=D.ns1,  # primary name server
-    rname=D.admin,  # email of the domain administrator
-    times=(
-        201307231,  # serial number
-        60 * 60 * 1,  # refresh
-        60 * 60 * 3,  # retry
-        60 * 60 * 24,  # expire
-        60 * 60 * 1,  # minimum
-    )
-)
-ns_records = [NS(D.ns1), NS(D.ns2)]
-records = {
-    D: [A(IP), AAAA((0,) * 16), MX(D.mail), soa_record] + ns_records,
-    D.ns1: [A(IP)],  # MX and NS records must never point to a CNAME alias (RFC 2181 section 10.3)
-    D.ns2: [A(IP)],
-    D.mail: [A(IP)],
-    D.admin: [CNAME(D)],
-}
-
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
 
 
@@ -476,7 +436,7 @@ def onaccept_udp(listener, method, mux, handlers):
 
 
 def dns_done(chan, data, method, sock, srcip, dstip, mux):
-    debug3('dns_done: channel=%d src=%r dst=%r\n%r\n' % (chan, srcip, dstip, data))
+    debug3('dns_done: channel=%d src=%r dst=%r\n' % (chan, srcip, dstip))
     del mux.channels[chan]
     del dnsreqs[chan]
     method.send_udp(sock, srcip, dstip, data)
@@ -488,38 +448,13 @@ def ondns(listener, method, mux, handlers):
     if t is None:
         return
     srcip, dstip, data = t
+    debug1('DNS request from %r to %r: %d bytes\n' % (srcip, dstip, len(data)))
 
-    request = DNSRecord.parse(data)
-    reply = DNSRecord(DNSHeader(id=request.header.id, qr=1, aa=1, ra=1), q=request.q)
-
-    qname = request.q.qname
-    qn = str(qname)
-    qtype = request.q.qtype
-    qt = QTYPE[qtype]
-
-    debug1('DNS request from %r to %r: %d bytes\n%r\n' % (srcip, dstip, len(data), request))
     chan = mux.next_channel()
     dnsreqs[chan] = now + 30
+    mux.send(chan, ssnet.CMD_DNS_REQ, data)
     mux.channels[chan] = lambda cmd, data: dns_done(
         chan, data, method, listener, srcip=dstip, dstip=srcip, mux=mux)
-
-    if qn == D or qn.endswith('.' + D):
-
-        for name, rrs in records.items():
-            if name == qn:
-                for rdata in rrs:
-                    rqt = rdata.__class__.__name__
-                    if qt in ['*', rqt]:
-                        reply.add_answer(RR(rname=qname, rtype=getattr(QTYPE, rqt), rclass=1, ttl=TTL, rdata=rdata))
-
-        for rdata in ns_records:
-            reply.add_ar(RR(rname=D, rtype=QTYPE.NS, rclass=1, ttl=TTL, rdata=rdata))
-
-        reply.add_auth(RR(rname=D, rtype=QTYPE.SOA, rclass=1, ttl=TTL, rdata=soa_record))
-
-        dns_done(chan, reply.pack(), method, listener, srcip=dstip, dstip=srcip, mux=mux)
-    else:
-        mux.send(chan, ssnet.CMD_DNS_REQ, data)
 
     expire_connections(now, mux)
 
