@@ -15,8 +15,6 @@ from sshuttle.ssnet import SockWrapper, Handler, Proxy, Mux, MuxWrapper
 from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
     resolvconf_nameservers
 from sshuttle.methods import get_method, Features
-from dnslib import *
-import netifaces
 
 import ipaddress
 from watchdog.observers import Observer
