@@ -335,8 +335,10 @@ def onaccept_tcp(listener, method, mux, handlers):
 
     dstip = method.get_tcp_dstip(sock)
 
-    if (acl_file_exists()):
+    if _acl_list is not None:
         if not connection_is_allowed(dstip[0], str(dstip[1])):
+            debug1('Deny TCP: %s:%r -> %s:%r.\n' % (srcip[0], srcip[1],
+                                                    dstip[0], dstip[1]))
             sock.close()
             return
 
@@ -357,17 +359,14 @@ def onaccept_tcp(listener, method, mux, handlers):
     handlers.append(Proxy(SockWrapper(sock, sock), outwrap))
     expire_connections(time.time(), mux)
 
-
-def acl_file_exists(self):
-    return self.acl_file_exists
-
 def port_in_range(port_range, port):
 
     parsed_range = port_range.split("-")
-    port_start = parsed_range[0]
-    port_end = parsed_range[1]
+    port_start = int(parsed_range[0])
+    port_end = int(parsed_range[1])
+    dest_port = int(port)
 
-    if (port >= port_start and port <= port_end):
+    if (dest_port >= port_start and dest_port <= port_end):
         return True
 
     return False
@@ -472,6 +471,7 @@ class AclHandler(FileSystemEventHandler):
         global _acl_list
         _acl_list = {}
         if (not self.acl_file_exists):
+            _acl_file = None
             return
         with open(self.acl_path, 'r') as acl:
             line_format = re.compile("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}\:\d{1,5}(\-\d{1,5})?$")
