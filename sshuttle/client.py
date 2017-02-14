@@ -335,7 +335,7 @@ def onaccept_tcp(listener, method, mux, handlers):
 
     dstip = method.get_tcp_dstip(sock)
 
-    if (_acl_list):
+    if (acl_file_exists()):
         if not connection_is_allowed(dstip[0], str(dstip[1])):
             sock.close()
             return
@@ -356,6 +356,10 @@ def onaccept_tcp(listener, method, mux, handlers):
     outwrap = MuxWrapper(mux, chan)
     handlers.append(Proxy(SockWrapper(sock, sock), outwrap))
     expire_connections(time.time(), mux)
+
+
+def acl_file_exists(self):
+    return self.acl_file_exists
 
 def port_in_range(port_range, port):
 
@@ -460,14 +464,14 @@ class AclHandler(FileSystemEventHandler):
 
     def __init__(self, path):
         self.acl_path = path
-        self.file_exists = False
+        self.acl_file_exists = False
         if (os.path.exists(path)):
-            self.file_exists = True
+            self.acl_file_exists = True
 
     def reload_acl_list(self):
         global _acl_list
         _acl_list = {}
-        if (not self.file_exists):
+        if (not self.acl_file_exists):
             return
         with open(self.acl_path, 'r') as acl:
             line_format = re.compile("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}\:\d{1,5}(\-\d{1,5})?$")
@@ -512,13 +516,13 @@ class AclHandler(FileSystemEventHandler):
 
     def on_created(self, event):
 
-        if (self.file_exists):
+        if (self.acl_file_exists):
             # modifying a file triggers a create so no need
             # to call the handler if the file already exists
             return
 
         if (event.src_path == self.acl_path):
-            self.file_exists = True
+            self.acl_file_exists = True
 
         if (event.src_path == self.acl_path):
             self.reload_acl_list()
@@ -526,15 +530,12 @@ class AclHandler(FileSystemEventHandler):
     def on_deleted(self, event):
 
         if (event.src_path == self.acl_path):
-            self.file_exists = False
+            self.acl_file_exists = False
 
         if (event.src_path == self.acl_path):
             self.reload_acl_list()
 
 def start_acl_watchdog(acl_path):
-
-    #sudo pip install watchdog
-    #sudo pip install py2-ipaddress
 
     if (not acl_path or acl_path == ""):
         return
