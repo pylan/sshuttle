@@ -471,7 +471,7 @@ class AclHandler(FileSystemEventHandler):
         global _acl_list
         _acl_list = {}
         if (not self.acl_file_exists):
-            _acl_file = None
+            _acl_list = None
             return
         with open(self.acl_path, 'r') as acl:
             line_format = re.compile("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}\:\d{1,5}(\-\d{1,5})?$")
