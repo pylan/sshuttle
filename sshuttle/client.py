@@ -17,7 +17,7 @@ from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
 from sshuttle.methods import get_method, Features
 
 import ipaddress
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver as Observer
 from watchdog.events import FileSystemEventHandler
 
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
@@ -515,11 +515,6 @@ class AclHandler(FileSystemEventHandler):
             self.reload_acl_list()
 
     def on_created(self, event):
-
-        if (self.acl_file_exists):
-            # modifying a file triggers a create so no need
-            # to call the handler if the file already exists
-            return
 
         if (event.src_path == self.acl_path):
             self.acl_file_exists = True
