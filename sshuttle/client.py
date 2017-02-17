@@ -398,9 +398,9 @@ def connection_is_allowed(dstip, dstport):
     # check for subnet rule
     for cidr_entry in _acl_list:
         if (cidr_entry != "0.0.0.0/0" and int(cidr_entry.split("/")[1]) != 32):
-            network = ipaddress.ip_network(cidr_entry)
-            addr = ipaddress.ip_address(dstip)
-            if (addr in network.hosts()):
+            network = ipaddress.ip_network(unicode(cidr_entry))
+            addr = ipaddress.ip_network(unicode(dstip + "/32"))
+            if (addr.subnet_of(network)):
                 if (acl_entry_match(cidr_entry, dstport)):
                     return True
 
