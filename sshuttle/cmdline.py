@@ -134,7 +134,9 @@ wrap=      restart counting channel numbers after this number (for testing)
 disable-ipv6 disables ipv6 support
 D,daemon   run in the background as a daemon
 s,subnets= file where the subnets are stored, instead of on the command line
-a,acl=     file where the ACL is stored, instead of on the command line
+a,acl=     file where the allowed ACL rules is stored
+aclsources=      file where the ACL Sources rules are stored
+disallowedacl=   file where the disallowed acl rules are stored
 syslog     send log messages to syslog (default if you use --daemon)
 pidfile=   pidfile name (only if using --daemon) [./sshuttle.pid]
 server     (internal use only)
@@ -226,6 +228,8 @@ def main():
                                       parse_subnets(includes),
                                       parse_subnets(excludes),
                                       opt.acl,
+                                      opt.disallowedacl,
+                                      opt.aclsources,
                                       opt.daemon, opt.pidfile)
 
             if return_code == 0:

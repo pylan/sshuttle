@@ -99,7 +99,7 @@ _swcount = 0
 
 class SockWrapper:
 
-    def __init__(self, rsock, wsock, connect_to=None, peername=None):
+    def __init__(self, rsock, wsock, connect_to=None, peername=None, connection_is_allowed_callback=None):
         global _swcount
         _swcount += 1
         debug3('creating new SockWrapper (%d now exist)\n' % _swcount)
@@ -110,6 +110,7 @@ class SockWrapper:
         self.buf = []
         self.connect_to = connect_to
         self.peername = peername or _try_peername(self.rsock)
+        self.connection_is_allowed_callback = connection_is_allowed_callback
         self.try_connect()
 
     def __del__(self):
@@ -198,7 +199,7 @@ class SockWrapper:
         return False  # fullness is determined by the socket's select() state
 
     def uwrite(self, buf):
-        if self.connect_to:
+        if self.connect_to or (self.connection_is_allowed_callback and not self.connection_is_allowed_callback()):
             return 0  # still connecting
         self.wsock.setblocking(False)
         try:
@@ -218,7 +219,7 @@ class SockWrapper:
         return self.uwrite(buf)
 
     def uread(self):
-        if self.connect_to:
+        if self.connect_to or (self.connection_is_allowed_callback and not self.connection_is_allowed_callback()):
             return None  # still connecting
         if self.shut_read:
             return

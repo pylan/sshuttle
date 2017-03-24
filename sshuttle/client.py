@@ -11,6 +11,7 @@ import sshuttle.ssh as ssh
 import sshuttle.ssyslog as ssyslog
 import sys
 import platform
+import json
 from sshuttle.ssnet import SockWrapper, Handler, Proxy, Mux, MuxWrapper
 from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
     resolvconf_nameservers
@@ -29,8 +30,13 @@ def got_signal(signum, frame):
 
 
 _pidname = None
-_acl_list = {}
+_allowed_targets = {}
+_disallowed_targets = {}
+_allowed_sources = {}
 
+ALLOWED_ACL_TYPE = 1
+DISALLOWED_ACL_TYPE = 2
+ACL_SOURCES_TYPE = 3
 
 def check_daemon(pidfile):
     global _pidname
@@ -290,7 +296,8 @@ class FirewallClient:
 
 dnsreqs = {}
 udp_by_src = {}
-
+tcp_conns = []
+active_tcp_conns = {}
 
 def expire_connections(now, mux):
     remove = []
@@ -314,6 +321,31 @@ def expire_connections(now, mux):
         del udp_by_src[peer]
     debug3('Remaining UDP channels: %d\n' % len(udp_by_src))
 
+    # we also want to close all TCP connections from sources that have expired their lease
+    global tcp_conns
+    new_tcp_conns = []
+    for (srcip, dstip, s, sock) in tcp_conns:
+        if connection_is_allowed(dstip[0], str(dstip[1]), srcip[0]) and s.ok:
+            new_tcp_conns.append((srcip, dstip, s, sock))
+        else:
+            try:
+                # remove from list of active tcp connections
+                del active_tcp_conns[sock]
+
+                # really make sure we kill everything while we can
+                s.ok = False
+                s.wrap1.noread()
+                s.wrap1.nowrite()
+                s.wrap2.noread()
+                s.wrap2.nowrite()
+                del mux.channels[s.wrap2.channel]
+                sock.close()
+                sock.shutdown(2)
+            except:
+                # we may hit an exception if the socket has already been closed...that is ok
+                pass
+
+    tcp_conns = new_tcp_conns
 
 def onaccept_tcp(listener, method, mux, handlers):
     global _extra_fd
@@ -335,12 +367,11 @@ def onaccept_tcp(listener, method, mux, handlers):
 
     dstip = method.get_tcp_dstip(sock)
 
-    if _acl_list is not None:
-        if not connection_is_allowed(dstip[0], str(dstip[1])):
-            debug1('Deny TCP: %s:%r -> %s:%r.\n' % (srcip[0], srcip[1],
-                                                    dstip[0], dstip[1]))
-            sock.close()
-            return
+    if not connection_is_allowed(dstip[0], str(dstip[1]), srcip[0]):
+        debug1('Deny TCP: %s:%r -> %s:%r.\n' % (srcip[0], srcip[1],
+                                                dstip[0], dstip[1]))
+        sock.close()
+        return
 
     debug1('Accept TCP: %s:%r -> %s:%r.\n' % (srcip[0], srcip[1],
                                               dstip[0], dstip[1]))
@@ -356,7 +387,10 @@ def onaccept_tcp(listener, method, mux, handlers):
     mux.send(chan, ssnet.CMD_TCP_CONNECT, b'%d,%s,%d' %
              (sock.family, dstip[0].encode("ASCII"), dstip[1]))
     outwrap = MuxWrapper(mux, chan)
-    handlers.append(Proxy(SockWrapper(sock, sock), outwrap))
+    s = Proxy(SockWrapper(sock, sock, None, None, lambda: connection_is_active(sock)), outwrap)
+    handlers.append(s)
+    active_tcp_conns[sock] = True
+    tcp_conns.append((srcip, dstip, s, sock))
     expire_connections(time.time(), mux)
 
 def port_in_range(port_range, port):
@@ -371,41 +405,51 @@ def port_in_range(port_range, port):
 
     return False
 
-def acl_entry_match(cidr, port):
-    if (cidr in _acl_list):
-        if (port in _acl_list[cidr]):
+def acl_entry_match(cidr, port, storeToCheck):
+    if (cidr in storeToCheck):
+        if (port in storeToCheck[cidr]):
             return True
-        for port_entry in _acl_list[cidr]:
+        for port_entry in storeToCheck[cidr]:
             if ("-" in port_entry):
                 if (port_in_range(port_entry, port)):
                     return True
 
     return False
 
-def connection_is_allowed(dstip, dstport):
-
+def matches_acl(dstip, dstport, store_to_check):
     # check for IP address rule
     cidr = dstip + "/32"
 
-    if (acl_entry_match(cidr, dstport)):
+    if (acl_entry_match(cidr, dstport, store_to_check)):
         return True
 
     # check for global rule
     cidr = "0.0.0.0/0"
-    if (acl_entry_match(cidr, dstport)):
+    if (acl_entry_match(cidr, dstport, store_to_check)):
         return True
 
     # check for subnet rule
-    for cidr_entry in _acl_list:
+    for cidr_entry in store_to_check:
         if (cidr_entry != "0.0.0.0/0" and int(cidr_entry.split("/")[1]) != 32):
             network = ipaddress.ip_network(unicode(cidr_entry))
             addr = ipaddress.ip_network(unicode(dstip + "/32"))
             if (addr.subnet_of(network)):
-                if (acl_entry_match(cidr_entry, dstport)):
+                if (acl_entry_match(cidr_entry, dstport, store_to_check)):
                     return True
 
     return False
 
+def connection_is_allowed(dstip, dstport, srcip):
+    if not _allowed_sources or (srcip not in _allowed_sources) or (
+                    srcip in _allowed_sources and (_allowed_sources[srcip] / 1000.0) < time.time()):
+        return False
+    if matches_acl(dstip, dstport, _disallowed_targets):
+        return False
+    elif matches_acl(dstip, dstport, _allowed_targets):
+        return True
+
+def connection_is_active(sock):
+    return sock in active_tcp_conns
 
 def udp_done(chan, data, method, sock, dstip):
     (src, srcport, data) = data.split(b",", 2)
@@ -461,18 +505,49 @@ def ondns(listener, method, mux, handlers):
 
 class AclHandler(FileSystemEventHandler):
 
-    def __init__(self, path):
+    def __init__(self, path, acl_type):
         self.acl_path = path
+        self.acl_type = acl_type
         self.acl_file_exists = False
         if (os.path.exists(path)):
             self.acl_file_exists = True
 
-    def reload_acl_list(self):
-        global _acl_list
-        _acl_list = {}
+    def reload_acl_file(self):
+        if (self.acl_type is ACL_SOURCES_TYPE):
+            self.reload_acl_sources_file()
+        elif (self.acl_type is ALLOWED_ACL_TYPE):
+            self.reload_acl_targets_file(True)
+        elif (self.acl_type is DISALLOWED_ACL_TYPE):
+            self.reload_acl_targets_file(False)
+        
+    def reload_acl_sources_file(self):
+        global _allowed_sources
+        _allowed_sources = {}
+
         if (not self.acl_file_exists):
-            _acl_list = None
+            _allowed_sources = None
             return
+        with open(self.acl_path, 'r') as acl:
+            _allowed_sources = json.loads(acl.read())
+
+        log("Network Connection Sources ACL \n\n%s" % _allowed_sources)
+
+    def reload_acl_targets_file(self, is_allowed_type):
+        if is_allowed_type:
+            global _allowed_targets
+            _allowed_targets = {}
+            _targets = _allowed_targets
+            if (not self.acl_file_exists):
+                _allowed_targets = None
+                return
+        else:
+            global _disallowed_targets
+            _disallowed_targets = {}
+            _targets = _disallowed_targets
+            if (not self.acl_file_exists):
+                _disallowed_targets = None
+                return
+
         with open(self.acl_path, 'r') as acl:
             line_format = re.compile("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}\:\d{1,5}(\-\d{1,5})?$")
             for line in acl:
@@ -487,19 +562,25 @@ class AclHandler(FileSystemEventHandler):
                     cidr = acl[0]
                     port = acl[1]
 
-                    if (not cidr in _acl_list):
-                        _acl_list[cidr] = []
-                    if (not port in _acl_list[cidr]):
-                        _acl_list[cidr].append(port)
+                    if (not cidr in _targets):
+                        _targets[cidr] = []
+                    if (not port in _targets[cidr]):
+                        _targets[cidr].append(port)
                     else:
                         log("Duplicate entry [%s]\n" % line)
                 except Exception as e:
                     log("%s\n" % e)
 
-        if (not _acl_list):
-            log("ACL list is empty. Restricting all access\n")
+        if (not _targets):
+            if is_allowed_type:
+                log("Allowed ACL list is empty. Restricting all access\n")
+            else:
+                log("Disallowed ACL list is empty.\n")
         else:
-            log("Network Connection ACL \n\n%s" % _acl_list)
+            if is_allowed_type:
+                log("Network Connection Allowed ACL \n\n%s" % _allowed_targets)
+            else:
+                log("Network Connection Disallowed ACL \n\n%s" % _disallowed_targets)
 
     def on_modified(self, event):
         # ignore directory operations
@@ -507,12 +588,12 @@ class AclHandler(FileSystemEventHandler):
             return
 
         if (event.src_path == self.acl_path):
-            self.reload_acl_list()
+            self.reload_acl_file()
 
     def on_moved(self, event):
 
         if (event.dest_path == self.acl_path):
-            self.reload_acl_list()
+            self.reload_acl_file()
 
     def on_created(self, event):
 
@@ -520,7 +601,7 @@ class AclHandler(FileSystemEventHandler):
             self.acl_file_exists = True
 
         if (event.src_path == self.acl_path):
-            self.reload_acl_list()
+            self.reload_acl_file()
 
     def on_deleted(self, event):
 
@@ -528,9 +609,9 @@ class AclHandler(FileSystemEventHandler):
             self.acl_file_exists = False
 
         if (event.src_path == self.acl_path):
-            self.reload_acl_list()
+            self.reload_acl_file()
 
-def start_acl_watchdog(acl_path):
+def start_acl_watchdog(acl_path, acl_type):
 
     if (not acl_path or acl_path == ""):
         return
@@ -541,12 +622,12 @@ def start_acl_watchdog(acl_path):
         log("ACL file path does not exist [%s] ... Creating \n" % acl_dir)
         os.mkdir(acl_path, 0755)
 
-    event_handler = AclHandler(acl_path)
+    event_handler = AclHandler(acl_path, acl_type)
     observer = Observer()
     observer.schedule(event_handler, path=acl_dir, recursive=False)
     observer.start()
 
-    event_handler.reload_acl_list()
+    event_handler.reload_acl_file()
 
 
 def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
@@ -658,6 +739,7 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
         if rv:
             raise Fatal('server died with error code %d' % rv)
 
+        expire_connections(time.time(), mux)
         ssnet.runonce(handlers, mux)
         if latency_control:
             mux.check_fullness()
@@ -666,7 +748,8 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
 def main(listenip_v6, listenip_v4,
          ssh_cmd, remotename, python, latency_control, dns, nslist,
          method_name, seed_hosts, auto_nets,
-         subnets_include, subnets_exclude, acl_file, daemon, pidfile):
+         subnets_include, subnets_exclude, acl_file, disallowed_acl_file, acl_sources_file,
+         daemon, pidfile):
 
     if daemon:
         try:
@@ -858,7 +941,9 @@ def main(listenip_v6, listenip_v4,
 
     # start the watchdog for acl files
     if (acl_file):
-        start_acl_watchdog(acl_file)
+        start_acl_watchdog(acl_file, ALLOWED_ACL_TYPE)
+        start_acl_watchdog(disallowed_acl_file, DISALLOWED_ACL_TYPE)
+        start_acl_watchdog(acl_sources_file, ACL_SOURCES_TYPE)
 
     # start the client process
     try:
