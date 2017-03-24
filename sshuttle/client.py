@@ -528,7 +528,10 @@ class AclHandler(FileSystemEventHandler):
             _allowed_sources = None
             return
         with open(self.acl_path, 'r') as acl:
-            _allowed_sources = json.loads(acl.read())
+            try:
+                _allowed_sources = json.loads(acl.read())
+            except BaseException as e:
+                log("An exception has occurred while loading the sources file: {}\n\n".format(e))
 
         log("Network Connection Sources ACL \n\n%s" % _allowed_sources)
 
