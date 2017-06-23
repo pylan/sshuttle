@@ -2,3 +2,4 @@ netifaces
 setuptools_scm
 py2-ipaddress
 watchdog
+filelock
