@@ -16,10 +16,10 @@ from sshuttle.ssnet import SockWrapper, Handler, Proxy, Mux, MuxWrapper
 from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
     resolvconf_nameservers
 from sshuttle.methods import get_method, Features
-
 import ipaddress
 from watchdog.observers.polling import PollingObserver as Observer
 from watchdog.events import FileSystemEventHandler
+import filelock
 
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
 
@@ -519,19 +519,24 @@ class AclHandler(FileSystemEventHandler):
             self.reload_acl_targets_file(True)
         elif (self.acl_type is DISALLOWED_ACL_TYPE):
             self.reload_acl_targets_file(False)
-        
+
     def reload_acl_sources_file(self):
         global _allowed_sources
-        _allowed_sources = {}
 
         if (not self.acl_file_exists):
             _allowed_sources = None
             return
-        with open(self.acl_path, 'r') as acl:
-            try:
-                _allowed_sources = json.loads(acl.read())
-            except BaseException as e:
-                log("An exception has occurred while loading the sources file: {}\n\n".format(e))
+        acl_sources_lock = filelock.SoftFileLock(self.acl_path + ".lock")
+        try:
+            with acl_sources_lock.acquire(timeout=1):
+                with open(self.acl_path, 'r') as acl:
+                    try:
+                        _new_allowed_sources = json.loads(acl.read())
+                        _allowed_sources = _new_allowed_sources
+                    except BaseException as e:
+                        log("An exception has occurred while loading the sources file: {}\n\n".format(e))
+        except filelock.Timeout:
+            log('Fail to get sources file lock due to timeout\n')
 
         log("Network Connection Sources ACL \n\n%s" % _allowed_sources)
 
