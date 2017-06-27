@@ -33,10 +33,12 @@ _pidname = None
 _allowed_targets = {}
 _disallowed_targets = {}
 _allowed_sources = {}
+_excluded_sources = {}
 
 ALLOWED_ACL_TYPE = 1
 DISALLOWED_ACL_TYPE = 2
 ACL_SOURCES_TYPE = 3
+ACL_EXCLUDED_SOURCES_TYPE = 4
 
 def check_daemon(pidfile):
     global _pidname
@@ -440,8 +442,12 @@ def matches_acl(dstip, dstport, store_to_check):
     return False
 
 def connection_is_allowed(dstip, dstport, srcip):
+    ctime = time.time()
+    if _excluded_sources and srcip in _excluded_sources and (_excluded_sources[srcip] / 1000.0) >= ctime:
+        debug1("Connection from a source excluded from the ACL")
+        return True
     if not _allowed_sources or (srcip not in _allowed_sources) or (
-                    srcip in _allowed_sources and (_allowed_sources[srcip] / 1000.0) < time.time()):
+                    srcip in _allowed_sources and (_allowed_sources[srcip] / 1000.0) < ctime):
         return False
     if matches_acl(dstip, dstport, _disallowed_targets):
         return False
@@ -515,11 +521,13 @@ class AclHandler(FileSystemEventHandler):
     def reload_acl_file(self):
         if (self.acl_type is ACL_SOURCES_TYPE):
             self.reload_acl_sources_file()
+        elif (self.acl_type is ACL_EXCLUDED_SOURCES_TYPE):
+            self.reload_acl_excluded_sources_file()
         elif (self.acl_type is ALLOWED_ACL_TYPE):
             self.reload_acl_targets_file(True)
         elif (self.acl_type is DISALLOWED_ACL_TYPE):
             self.reload_acl_targets_file(False)
-        
+
     def reload_acl_sources_file(self):
         global _allowed_sources
         _allowed_sources = {}
@@ -534,6 +542,21 @@ class AclHandler(FileSystemEventHandler):
                 log("An exception has occurred while loading the sources file: {}\n\n".format(e))
 
         log("Network Connection Sources ACL \n\n%s" % _allowed_sources)
+
+    def reload_acl_excluded_sources_file(self):
+        global _excluded_sources
+        _excluded_sources = {}
+
+        if (not self.acl_file_exists):
+            _excluded_sources = None
+            return
+        with open(self.acl_path, 'r') as acl:
+            try:
+                _excluded_sources = json.loads(acl.read())
+            except BaseException as e:
+                log("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
+
+        log("Network Connection Excluded Sources ACL \n\n%s" % _excluded_sources)
 
     def reload_acl_targets_file(self, is_allowed_type):
         if is_allowed_type:
@@ -751,7 +774,8 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
 def main(listenip_v6, listenip_v4,
          ssh_cmd, remotename, python, latency_control, dns, nslist,
          method_name, seed_hosts, auto_nets,
-         subnets_include, subnets_exclude, acl_file, disallowed_acl_file, acl_sources_file,
+         subnets_include, subnets_exclude, acl_file,
+         disallowed_acl_file, acl_sources_file, acl_excluded_sources_file,
          daemon, pidfile):
 
     if daemon:
@@ -947,6 +971,7 @@ def main(listenip_v6, listenip_v4,
         start_acl_watchdog(acl_file, ALLOWED_ACL_TYPE)
         start_acl_watchdog(disallowed_acl_file, DISALLOWED_ACL_TYPE)
         start_acl_watchdog(acl_sources_file, ACL_SOURCES_TYPE)
+        start_acl_watchdog(acl_excluded_sources_file, ACL_EXCLUDED_SOURCES_TYPE)
 
     # start the client process
     try:

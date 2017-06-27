@@ -136,6 +136,7 @@ D,daemon   run in the background as a daemon
 s,subnets= file where the subnets are stored, instead of on the command line
 a,acl=     file where the allowed ACL rules is stored
 aclsources=      file where the ACL Sources rules are stored
+aclexcludedsources= file where the excluded hosts acl rules are stored
 disallowedacl=   file where the disallowed acl rules are stored
 syslog     send log messages to syslog (default if you use --daemon)
 pidfile=   pidfile name (only if using --daemon) [./sshuttle.pid]
@@ -230,6 +231,7 @@ def main():
                                       opt.acl,
                                       opt.disallowedacl,
                                       opt.aclsources,
+                                      opt.aclexcludedsources,
                                       opt.daemon, opt.pidfile)
 
             if return_code == 0:
