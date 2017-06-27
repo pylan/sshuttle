@@ -550,16 +550,21 @@ class AclHandler(FileSystemEventHandler):
 
     def reload_acl_excluded_sources_file(self):
         global _excluded_sources
-        _excluded_sources = {}
 
         if (not self.acl_file_exists):
             _excluded_sources = None
             return
-        with open(self.acl_path, 'r') as acl:
-            try:
-                _excluded_sources = json.loads(acl.read())
-            except BaseException as e:
-                log("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
+        acl_excluded_lock = filelock.SoftFileLock(self.acl_path + ".lock")
+        try:
+            with acl_excluded_lock.acquire(timeout=1):
+                with open(self.acl_path, 'r') as acl:
+                    try:
+                        _new_excluded_sources = json.loads(acl.read())
+                        _excluded_sources = _new_excluded_sources
+                    except BaseException as e:
+                        log("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
+        except filelock.Timeout:
+            log('Fail to get excluded sources file lock due to timeout\n')
 
         log("Network Connection Excluded Sources ACL \n\n%s" % _excluded_sources)
 
