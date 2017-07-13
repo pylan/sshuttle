@@ -219,7 +219,7 @@ def main():
             if not opt.max_fullness:
                 opt.max_fullness = 32768
 
-            log("Using a max fullness value of %d" % opt.max_fullness)
+            log("Using a max fullness value of %d\n" % opt.max_fullness)
 
             return_code = client.main(ipport_v6, ipport_v4,
                                       opt.ssh_cmd,
