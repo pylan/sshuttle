@@ -12,6 +12,7 @@ import sshuttle.ssyslog as ssyslog
 import sys
 import platform
 import json
+from dnslib import *
 from sshuttle.ssnet import SockWrapper, Handler, Proxy, Mux, MuxWrapper
 from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
     resolvconf_nameservers
@@ -39,6 +40,25 @@ ALLOWED_ACL_TYPE = 1
 DISALLOWED_ACL_TYPE = 2
 ACL_SOURCES_TYPE = 3
 ACL_EXCLUDED_SOURCES_TYPE = 4
+
+preferreddns = ''
+notpreferreddns = ''
+
+try:
+    DNS_PROXY_SUFFIX1 = os.environ['DNS_PROXY_SUFFIX']
+    DNS_PROXY_SUFFIX2 = DNS_PROXY_SUFFIX1 + '.'
+    DNS_1 = os.environ['DNS_1']
+    DNS_2 = os.environ['DNS_2']
+
+    preferreddns = DNS_1
+    notpreferreddns = DNS_2
+except KeyError:
+    log('Error: Could not read environment variables for DNS_PROXY_SUFFIX or DNS_1 or DNS_2')
+    DNS_PROXY_SUFFIX1 = ''
+    DNS_PROXY_SUFFIX2 = ''
+    DNS_1 = ''
+    DNS_2 = ''
+
 
 def check_daemon(pidfile):
     global _pidname
@@ -297,6 +317,7 @@ class FirewallClient:
 
 
 dnsreqs = {}
+dnsreqs2 = {}
 udp_by_src = {}
 tcp_conns = []
 active_tcp_conns = {}
@@ -488,8 +509,13 @@ def onaccept_udp(listener, method, mux, handlers):
 
 def dns_done(chan, data, method, sock, srcip, dstip, mux):
     debug3('dns_done: channel=%d src=%r dst=%r\n' % (chan, srcip, dstip))
+
+    response = DNSRecord.parse(data)
+    debug3('For the DNS request: %r   >>>>> DNS response: %r <<<<<<' % (dnsreqs2[chan], response))
+
     del mux.channels[chan]
     del dnsreqs[chan]
+    del dnsreqs2[chan]
     method.send_udp(sock, srcip, dstip, data)
 
 
@@ -499,15 +525,56 @@ def ondns(listener, method, mux, handlers):
     if t is None:
         return
     srcip, dstip, data = t
-    debug1('DNS request from %r to %r: %d bytes\n' % (srcip, dstip, len(data)))
+
+    request = DNSRecord.parse(data)
+
+    qname = request.q.qname
+    qn = str(qname)
+    qtype = request.q.qtype
+    qt = QTYPE[qtype]
 
     chan = mux.next_channel()
+    dnsreqs2[chan] = request
     dnsreqs[chan] = now + 30
-    mux.send(chan, ssnet.CMD_DNS_REQ, data)
     mux.channels[chan] = lambda cmd, data: dns_done(
         chan, data, method, listener, srcip=dstip, dstip=srcip, mux=mux)
 
+    if preferreddns and notpreferreddns and DNS_PROXY_SUFFIX1 and \
+            (qn.endswith(DNS_PROXY_SUFFIX1) or qn.endswith(DNS_PROXY_SUFFIX2)):
+        try:
+            response = send_udp(data, preferreddns, 53)
+            dns_done(chan, response, method, listener, srcip=dstip, dstip=srcip, mux=mux)
+        except socket.error:
+            debug3('Error: Could not contact DNS server %r, now trying %r' % (preferreddns, notpreferreddns))
+
+            global preferreddns
+            global notpreferreddns
+
+            _notpreferreddns = notpreferreddns
+            notpreferreddns = preferreddns
+            preferreddns = _notpreferreddns
+
+            # try the other AD server if there was an error...
+            try:
+                response = send_udp(data, preferreddns, 53)
+                dns_done(chan, response, method, listener, srcip=dstip, dstip=srcip, mux=mux)
+            except socket.error:
+                # fallback to agent if both AD servers are down.
+                mux.send(chan, ssnet.CMD_DNS_REQ, data)
+    else:
+        mux.send(chan, ssnet.CMD_DNS_REQ, data)
+
     expire_connections(now, mux)
+
+
+def send_udp(data, host, port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(5)
+    sock.sendto(data, (host, port))
+    response, server = sock.recvfrom(8192)
+    sock.close()
+    return response
+
 
 class AclHandler(FileSystemEventHandler):
 
@@ -542,11 +609,11 @@ class AclHandler(FileSystemEventHandler):
                         _new_allowed_sources = json.loads(acl.read())
                         _allowed_sources = _new_allowed_sources
                     except BaseException as e:
-                        log("An exception has occurred while loading the sources file: {}\n\n".format(e))
+                        debug3("An exception has occurred while loading the sources file: {}\n\n".format(e))
         except filelock.Timeout:
-            log('Fail to get sources file lock due to timeout\n')
+            debug3('Fail to get sources file lock due to timeout\n')
 
-        log("Network Connection Sources ACL \n\n%s" % _allowed_sources)
+        debug3("Network Connection Sources ACL \n\n%s" % _allowed_sources)
 
     def reload_acl_excluded_sources_file(self):
         global _excluded_sources
@@ -562,11 +629,11 @@ class AclHandler(FileSystemEventHandler):
                         _new_excluded_sources = json.loads(acl.read())
                         _excluded_sources = _new_excluded_sources
                     except BaseException as e:
-                        log("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
+                        debug3("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
         except filelock.Timeout:
-            log('Fail to get excluded sources file lock due to timeout\n')
+            debug3('Fail to get excluded sources file lock due to timeout\n')
 
-        log("Network Connection Excluded Sources ACL \n\n%s" % _excluded_sources)
+        debug3("Network Connection Excluded Sources ACL \n\n%s" % _excluded_sources)
 
     def reload_acl_targets_file(self, is_allowed_type):
         if is_allowed_type:
