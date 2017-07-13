@@ -358,6 +358,7 @@ class Mux(Handler):
 
     def check_fullness(self):
         if self.fullness > self.max_fullness:
+            log("Buffer is too full: %d - max: %d" % (self.fullness, self.max_fullness))
             if not self.too_full:
                 self.send(0, CMD_PING, b'rttest')
             self.too_full = True
