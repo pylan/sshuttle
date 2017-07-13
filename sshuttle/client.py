@@ -734,7 +734,7 @@ def start_acl_watchdog(acl_path, acl_type):
 
 
 def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
-          python, latency_control,
+          python, latency_control, max_fullness,
           dns_listener, seed_hosts, auto_nets, daemon):
 
     debug1('Starting client with Python version %s\n'
@@ -753,13 +753,13 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
         (serverproc, serversock) = ssh.connect(
             ssh_cmd, remotename, python,
             stderr=ssyslog._p and ssyslog._p.stdin,
-            options=dict(latency_control=latency_control))
+            options=dict(latency_control=latency_control, max_fullness=max_fullness))
     except socket.error as e:
         if e.args[0] == errno.EPIPE:
             raise Fatal("failed to establish ssh session (1)")
         else:
             raise
-    mux = Mux(serversock, serversock)
+    mux = Mux(serversock, serversock, max_fullness)
     handlers.append(mux)
 
     expected = b'SSHUTTLE0001'
@@ -849,7 +849,7 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
 
 
 def main(listenip_v6, listenip_v4,
-         ssh_cmd, remotename, python, latency_control, dns, nslist,
+         ssh_cmd, remotename, python, latency_control, max_fullness, dns, nslist,
          method_name, seed_hosts, auto_nets,
          subnets_include, subnets_exclude, acl_file,
          disallowed_acl_file, acl_sources_file, acl_excluded_sources_file,
@@ -1053,7 +1053,7 @@ def main(listenip_v6, listenip_v4,
     # start the client process
     try:
         return _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
-                     python, latency_control, dns_listener,
+                     python, latency_control, max_fullness, dns_listener,
                      seed_hosts, auto_nets, daemon)
     finally:
         try:

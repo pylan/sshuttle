@@ -324,10 +324,11 @@ class Proxy(Handler):
 
 class Mux(Handler):
 
-    def __init__(self, rsock, wsock):
+    def __init__(self, rsock, wsock, max_fullness):
         Handler.__init__(self, [rsock, wsock])
         self.rsock = rsock
         self.wsock = wsock
+        self.max_fullness = max_fullness
         self.new_channel = self.got_dns_req = self.got_routes = None
         self.got_udp_open = self.got_udp_data = self.got_udp_close = None
         self.got_host_req = self.got_host_list = None
@@ -356,7 +357,7 @@ class Mux(Handler):
         return total
 
     def check_fullness(self):
-        if self.fullness > 32768:
+        if self.fullness > self.max_fullness:
             if not self.too_full:
                 self.send(0, CMD_PING, b'rttest')
             self.too_full = True

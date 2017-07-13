@@ -216,7 +216,7 @@ class UdpProxy(Handler):
         self.mux.send(self.chan, ssnet.CMD_UDP_DATA, hdr + data)
 
 
-def main(latency_control):
+def main(latency_control, max_fullness):
     debug1('Starting server with Python version %s\n'
            % platform.python_version())
 
@@ -239,7 +239,8 @@ def main(latency_control):
     mux = Mux(socket.fromfd(sys.stdin.fileno(),
                             socket.AF_INET, socket.SOCK_STREAM),
               socket.fromfd(sys.stdout.fileno(),
-                            socket.AF_INET, socket.SOCK_STREAM))
+                            socket.AF_INET, socket.SOCK_STREAM),
+            max_fullness)
     handlers.append(mux)
     routepkt = b''
     for r in routes:
