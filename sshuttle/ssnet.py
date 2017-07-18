@@ -108,6 +108,7 @@ class SockWrapper:
         self.wsock = wsock
         self.shut_read = self.shut_write = False
         self.buf = []
+        self.total_wrote = 0
         self.connect_to = connect_to
         self.peername = peername or _try_peername(self.rsock)
         self.connection_is_allowed_callback = connection_is_allowed_callback
@@ -242,6 +243,8 @@ class SockWrapper:
     def copy_to(self, outwrap):
         if self.buf and self.buf[0]:
             wrote = outwrap.write(self.buf[0])
+            if isinstance(wrote, (int, long)):
+                self.total_wrote += wrote
             self.buf[0] = self.buf[0][wrote:]
         while self.buf and not self.buf[0]:
             self.buf.pop(0)
@@ -321,7 +324,78 @@ class Proxy(Handler):
             self.wrap1.nowrite()
             self.wrap2.nowrite()
 
+# Separate out the proxy from the comparison functions for sorting so that they don't interfere with proxy lists
+class ProxyWrapper:
+    
+    def __init__(self, proxy):
+        self.proxy = proxy
 
+    def get_total_wrote(self):
+        self_total_wrote = 0
+        if isinstance(self.proxy.wrap1, MuxWrapper) and hasattr(self.proxy.wrap1, 'total_wrote') and \
+            isinstance(self.proxy.wrap1.total_wrote, (int, long)):
+            self_total_wrote = self.proxy.wrap1.total_wrote
+        elif isinstance(self.proxy.wrap2, MuxWrapper) and hasattr(self.proxy.wrap2, 'total_wrote') and \
+                isinstance(self.proxy.wrap2.total_wrote, (int, long)):
+            self_total_wrote = self.proxy.wrap2.total_wrote
+        
+        return self_total_wrote
+
+    def __lt__(self, other):
+        self_total_wrote = 0
+        if hasattr(self, 'get_total_wrote'):
+            self_total_wrote = self.get_total_wrote()
+
+        other_total_wrote = 0
+        if hasattr(other, 'get_total_wrote'):
+            other_total_wrote = other.get_total_wrote()
+
+        return self_total_wrote < other_total_wrote
+
+    def __le__(self, other):
+        self_total_wrote = 0
+        if hasattr(self, 'get_total_wrote'):
+            self_total_wrote = self.get_total_wrote()
+
+        other_total_wrote = 0
+        if hasattr(other, 'get_total_wrote'):
+            other_total_wrote = other.get_total_wrote()
+
+        return self_total_wrote <= other_total_wrote
+
+    def __gt__(self, other):
+        self_total_wrote = 0
+        if hasattr(self, 'get_total_wrote'):
+            self_total_wrote = self.get_total_wrote()
+
+        other_total_wrote = 0
+        if hasattr(other, 'get_total_wrote'):
+            other_total_wrote = other.get_total_wrote()
+
+        return self_total_wrote > other_total_wrote
+
+    def __ge__(self, other):
+        self_total_wrote = 0
+        if hasattr(self, 'get_total_wrote'):
+            self_total_wrote = self.get_total_wrote()
+
+        other_total_wrote = 0
+        if hasattr(other, 'get_total_wrote'):
+            other_total_wrote = other.get_total_wrote()
+
+        return self_total_wrote >= other_total_wrote
+
+    def __cmp__(self, other):
+        self_total_wrote = 0
+        if hasattr(self, 'get_total_wrote'):
+            self_total_wrote = self.get_total_wrote()
+
+        other_total_wrote = 0
+        if hasattr(other, 'get_total_wrote'):
+            other_total_wrote = other.get_total_wrote()
+
+        return cmp(self_total_wrote, other_total_wrote)
+    
 class Mux(Handler):
 
     def __init__(self, rsock, wsock):
@@ -356,10 +430,21 @@ class Mux(Handler):
         return total
 
     def check_fullness(self):
-        if self.fullness > 32768:
-            if not self.too_full:
-                self.send(0, CMD_PING, b'rttest')
-            self.too_full = True
+        # Fullness is a factor of the number of channels. The more the channels, the smaller the fullness factor.
+        # This is so that the mux bandwidth can become full faster with many channels to give all channels a fair
+        # chance to go through.
+        num_channels = len(self.channels.keys())
+
+        # No fullness applied if there is only one channel so that this channel can use all the bandwidth.
+        if num_channels > 1:
+            max_fullness = 2097152 / num_channels
+            if (max_fullness < 65535):
+                max_fullness = 65535
+
+            if self.fullness > max_fullness:
+                if not self.too_full:
+                    self.send(0, CMD_PING, b'rttest')
+                self.too_full = True
         # ob = []
         # for b in self.outbuf:
         #    (s1,s2,c) = struct.unpack('!ccH', b[:4])
@@ -520,8 +605,8 @@ class MuxWrapper(SockWrapper):
     def uwrite(self, buf):
         if self.mux.too_full:
             return 0  # too much already enqueued
-        if len(buf) > 2048:
-            buf = buf[:2048]
+        if len(buf) > 65535:
+            buf = buf[:65535]
         self.mux.send(self.channel, CMD_TCP_DATA, buf)
         return len(buf)
 
@@ -570,11 +655,25 @@ def runonce(handlers, mux):
            % (len(handlers), _fds(r), _fds(w), _fds(x)))
     ready = r + w + x
     did = {}
+    proxywrappers = []
+
     for h in handlers:
-        for s in h.socks:
+        if isinstance(h, Proxy):
+            proxywrappers.append(ProxyWrapper(h))
+        else:
+            for s in h.socks:
+                if s in ready:
+                    h.callback(s)
+                    did[s] = 1
+
+    proxywrappers.sort()
+
+    for proxywrapper in proxywrappers:
+        for s in proxywrapper.proxy.socks:
             if s in ready:
-                h.callback(s)
+                proxywrapper.proxy.callback(s)
                 did[s] = 1
+
     for s in ready:
         if s not in did:
             raise Fatal('socket %r was not used by any handler' % s)
