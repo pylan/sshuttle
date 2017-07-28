@@ -129,7 +129,6 @@ class SockWrapper:
         return 'SW%s:%s' % (fds, self.peername)
 
     def seterr(self, e):
-        log('>>>> There was an error! %r\n' % e)
         if not self.exc:
             self.exc = e
         self.nowrite()
@@ -208,7 +207,7 @@ class SockWrapper:
             return _nb_clean(os.write, self.wsock.fileno(), buf)
         except OSError as e:
             if e.errno == errno.EPIPE:
-                log('>>>>>> %r: uwrite: got EPIPE\n' % self)
+                debug1('%r: uwrite: got EPIPE\n' % self)
                 self.nowrite()
                 return 0
             else:
@@ -239,7 +238,6 @@ class SockWrapper:
         if rb:
             self.buf.append(rb)
         if rb == b'':  # empty string means EOF; None means temporarily empty
-            log(">>>>>> Empty string means EOF for %r\n" % self)
             self.noread()
 
     def copy_to(self, outwrap):
@@ -574,7 +572,6 @@ class MuxWrapper(SockWrapper):
         debug2('new channel: %d\n' % channel)
 
     def __del__(self):
-        log('>>>>> Socket deleted! % \n' % self)
         self.nowrite()
         SockWrapper.__del__(self)
 
