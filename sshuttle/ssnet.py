@@ -243,7 +243,7 @@ class SockWrapper:
     def copy_to(self, outwrap):
         if self.buf and self.buf[0]:
             wrote = outwrap.write(self.buf[0])
-            if isinstance(wrote, (int, long)):
+            if wrote > 0:
                 self.total_wrote += wrote
             self.buf[0] = self.buf[0][wrote:]
         while self.buf and not self.buf[0]:
@@ -333,10 +333,10 @@ class ProxyWrapper:
     def get_total_wrote(self):
         self_total_wrote = 0
         if isinstance(self.proxy.wrap1, MuxWrapper) and hasattr(self.proxy.wrap1, 'total_wrote') and \
-            isinstance(self.proxy.wrap1.total_wrote, (int, long)):
+                self.proxy.wrap1.total_wrote > 0:
             self_total_wrote = self.proxy.wrap1.total_wrote
         elif isinstance(self.proxy.wrap2, MuxWrapper) and hasattr(self.proxy.wrap2, 'total_wrote') and \
-                isinstance(self.proxy.wrap2.total_wrote, (int, long)):
+                self.proxy.wrap2.total_wrote > 0:
             self_total_wrote = self.proxy.wrap2.total_wrote
         
         return self_total_wrote
