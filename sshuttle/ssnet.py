@@ -129,6 +129,7 @@ class SockWrapper:
         return 'SW%s:%s' % (fds, self.peername)
 
     def seterr(self, e):
+        log('>>>> There was an error! %r\n' % e)
         if not self.exc:
             self.exc = e
         self.nowrite()
@@ -207,7 +208,7 @@ class SockWrapper:
             return _nb_clean(os.write, self.wsock.fileno(), buf)
         except OSError as e:
             if e.errno == errno.EPIPE:
-                debug1('%r: uwrite: got EPIPE\n' % self)
+                log('>>>>>> %r: uwrite: got EPIPE\n' % self)
                 self.nowrite()
                 return 0
             else:
@@ -238,12 +239,13 @@ class SockWrapper:
         if rb:
             self.buf.append(rb)
         if rb == b'':  # empty string means EOF; None means temporarily empty
+            log(">>>>>> Empty string means EOF for %r\n" % self)
             self.noread()
 
     def copy_to(self, outwrap):
         if self.buf and self.buf[0]:
             wrote = outwrap.write(self.buf[0])
-            if isinstance(wrote, (int, long)):
+            if wrote > 0:
                 self.total_wrote += wrote
             self.buf[0] = self.buf[0][wrote:]
         while self.buf and not self.buf[0]:
@@ -333,10 +335,10 @@ class ProxyWrapper:
     def get_total_wrote(self):
         self_total_wrote = 0
         if isinstance(self.proxy.wrap1, MuxWrapper) and hasattr(self.proxy.wrap1, 'total_wrote') and \
-            isinstance(self.proxy.wrap1.total_wrote, (int, long)):
+                self.proxy.wrap1.total_wrote > 0:
             self_total_wrote = self.proxy.wrap1.total_wrote
         elif isinstance(self.proxy.wrap2, MuxWrapper) and hasattr(self.proxy.wrap2, 'total_wrote') and \
-                isinstance(self.proxy.wrap2.total_wrote, (int, long)):
+                self.proxy.wrap2.total_wrote > 0:
             self_total_wrote = self.proxy.wrap2.total_wrote
         
         return self_total_wrote
@@ -572,6 +574,7 @@ class MuxWrapper(SockWrapper):
         debug2('new channel: %d\n' % channel)
 
     def __del__(self):
+        log('>>>>> Socket deleted! % \n' % self)
         self.nowrite()
         SockWrapper.__del__(self)
 
