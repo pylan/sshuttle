@@ -53,16 +53,6 @@ class Method(BaseMethod):
         _ipt('-A', chain, '-j', 'RETURN',
              '--dest', '%s/32' % ip)
 
-        # add a rule not route packets that are
-        # originate from the container network
-        _ipt('-A', chain, '-j', 'RETURN',
-             '--src', '172.17.0.0/16')
-
-        # add a rule not route packets that are
-        # destined to the container network
-        _ipt('-A', chain, '-j', 'RETURN',
-             '--dest', '172.17.0.0/16')
-
         # create new subnet entries.  Note that we're sorting in a very
         # particular order: we need to go from most-specific (largest
         # swidth) to least-specific, and at any given level of specificity,
