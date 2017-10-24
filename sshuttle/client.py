@@ -454,11 +454,14 @@ def matches_acl(dstip, dstport, store_to_check):
     # check for subnet rule
     for cidr_entry in store_to_check:
         if (cidr_entry != "0.0.0.0/0" and int(cidr_entry.split("/")[1]) != 32):
-            network = ipaddress.ip_network(unicode(cidr_entry))
-            addr = ipaddress.ip_network(unicode(dstip + "/32"))
-            if (addr.subnet_of(network)):
-                if (acl_entry_match(cidr_entry, dstport, store_to_check)):
-                    return True
+            try:
+                network = ipaddress.ip_network(unicode(cidr_entry))
+                addr = ipaddress.ip_network(unicode(dstip + "/32"))
+                if (addr.subnet_of(network)):
+                    if (acl_entry_match(cidr_entry, dstport, store_to_check)):
+                        return True
+            except Exception as e:
+                log("Failed to parse CIDR block '%s': %s. Ignoring entry.\n" % (cidr_entry, e))
 
     return False
 
