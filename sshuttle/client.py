@@ -589,14 +589,17 @@ class AclHandler(FileSystemEventHandler):
             self.acl_file_exists = True
 
     def reload_acl_file(self):
-        if (self.acl_type is ACL_SOURCES_TYPE):
-            self.reload_acl_sources_file()
-        elif (self.acl_type is ACL_EXCLUDED_SOURCES_TYPE):
-            self.reload_acl_excluded_sources_file()
-        elif (self.acl_type is ALLOWED_ACL_TYPE):
-            self.reload_acl_targets_file(True)
-        elif (self.acl_type is DISALLOWED_ACL_TYPE):
-            self.reload_acl_targets_file(False)
+        try:
+            if (self.acl_type is ACL_SOURCES_TYPE):
+                self.reload_acl_sources_file()
+            elif (self.acl_type is ACL_EXCLUDED_SOURCES_TYPE):
+                self.reload_acl_excluded_sources_file()
+            elif (self.acl_type is ALLOWED_ACL_TYPE):
+                self.reload_acl_targets_file(True)
+            elif (self.acl_type is DISALLOWED_ACL_TYPE):
+                self.reload_acl_targets_file(False)
+        except Exception as e:
+            log("Failed to reload ACL file: %s\n" % e)
 
     def reload_acl_sources_file(self):
         global _allowed_sources
