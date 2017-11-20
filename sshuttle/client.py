@@ -20,7 +20,6 @@ from sshuttle.methods import get_method, Features
 import ipaddress
 from watchdog.observers.polling import PollingObserver as Observer
 from watchdog.events import FileSystemEventHandler
-import filelock
 
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
 
@@ -607,17 +606,12 @@ class AclHandler(FileSystemEventHandler):
         if (not self.acl_file_exists):
             _allowed_sources = None
             return
-        acl_sources_lock = filelock.SoftFileLock(self.acl_path + ".lock")
-        try:
-            with acl_sources_lock.acquire(timeout=1):
-                with open(self.acl_path, 'r') as acl:
-                    try:
-                        _new_allowed_sources = json.loads(acl.read())
-                        _allowed_sources = _new_allowed_sources
-                    except BaseException as e:
-                        debug3("An exception has occurred while loading the sources file: {}\n\n".format(e))
-        except filelock.Timeout:
-            debug3('Fail to get sources file lock due to timeout\n')
+        with open(self.acl_path, 'r') as acl:
+            try:
+                _new_allowed_sources = json.loads(acl.read())
+                _allowed_sources = _new_allowed_sources
+            except BaseException as e:
+                debug3("An exception has occurred while loading the sources file: {}\n\n".format(e))
 
         debug3("Network Connection Sources ACL \n\n%s" % _allowed_sources)
 
@@ -627,17 +621,12 @@ class AclHandler(FileSystemEventHandler):
         if (not self.acl_file_exists):
             _excluded_sources = None
             return
-        acl_excluded_lock = filelock.SoftFileLock(self.acl_path + ".lock")
-        try:
-            with acl_excluded_lock.acquire(timeout=1):
-                with open(self.acl_path, 'r') as acl:
-                    try:
-                        _new_excluded_sources = json.loads(acl.read())
-                        _excluded_sources = _new_excluded_sources
-                    except BaseException as e:
-                        debug3("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
-        except filelock.Timeout:
-            debug3('Fail to get excluded sources file lock due to timeout\n')
+        with open(self.acl_path, 'r') as acl:
+            try:
+                _new_excluded_sources = json.loads(acl.read())
+                _excluded_sources = _new_excluded_sources
+            except BaseException as e:
+                debug3("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
 
         debug3("Network Connection Excluded Sources ACL \n\n%s" % _excluded_sources)
 
