@@ -18,8 +18,8 @@ from sshuttle.helpers import log, debug1, debug2, debug3, Fatal, islocal, \
     resolvconf_nameservers
 from sshuttle.methods import get_method, Features
 import ipaddress
-from watchdog.observers.polling import PollingObserver as Observer
-from watchdog.events import FileSystemEventHandler
+import threading
+import redis
 
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
 
@@ -40,6 +40,11 @@ DISALLOWED_ACL_TYPE = 2
 ACL_SOURCES_TYPE = 3
 ACL_EXCLUDED_SOURCES_TYPE = 4
 
+sshuttleAcl = "sshuttleAcl"
+sshuttleAclSources = "sshuttleAclSources"
+sshuttleAclExcluded = "sshuttleAclExcluded"
+sshuttleAclEventsChannel = "aclEvents"
+
 preferreddns = ''
 notpreferreddns = ''
 
@@ -51,13 +56,21 @@ try:
 
     preferreddns = DNS_1
     notpreferreddns = DNS_2
+
 except KeyError:
-    log('Error: Could not read environment variables for DNS_PROXY_SUFFIX or DNS_1 or DNS_2')
+    log('Error: Could not read environment variables for DNS_PROXY_SUFFIX or DNS_1 or DNS_2\n')
     DNS_PROXY_SUFFIX1 = ''
     DNS_PROXY_SUFFIX2 = ''
     DNS_1 = ''
     DNS_2 = ''
 
+REDIS_HOST = None
+REDIS_PORT = None
+try:
+    REDIS_HOST = os.environ['REDIS_HOST']
+    REDIS_PORT = os.environ['REDIS_PORT']
+except KeyError:
+    log('Error: Could not read environment variables for REDIS_HOST and/or REDIS_PORT\n')
 
 def check_daemon(pidfile):
     global _pidname
@@ -465,14 +478,17 @@ def matches_acl(dstip, dstport, store_to_check):
     return False
 
 def connection_is_allowed(dstip, dstport, srcip):
+
     ctime = time.time()
     if _excluded_sources and srcip in _excluded_sources and (_excluded_sources[srcip] / 1000.0) >= ctime:
         debug1("Connection from a source excluded from the ACL")
         return True
     if not _allowed_sources or (srcip not in _allowed_sources) or (
                     srcip in _allowed_sources and (_allowed_sources[srcip] / 1000.0) < ctime):
+        debug3("Connection not allowed - allowed sources exception")
         return False
     if matches_acl(dstip, dstport, _disallowed_targets):
+        debug3("Connection not allowed - firewall ACL exception")
         return False
     elif matches_acl(dstip, dstport, _allowed_targets):
         return True
@@ -541,6 +557,9 @@ def ondns(listener, method, mux, handlers):
     mux.channels[chan] = lambda cmd, data: dns_done(
         chan, data, method, listener, srcip=dstip, dstip=srcip, mux=mux)
 
+    global preferreddns
+    global notpreferreddns
+
     if preferreddns and notpreferreddns and DNS_PROXY_SUFFIX1 and \
             (qn.endswith(DNS_PROXY_SUFFIX1) or qn.endswith(DNS_PROXY_SUFFIX2)):
         try:
@@ -548,9 +567,6 @@ def ondns(listener, method, mux, handlers):
             dns_done(chan, response, method, listener, srcip=dstip, dstip=srcip, mux=mux)
         except socket.error:
             debug3('Error: Could not contact DNS server %r, now trying %r' % (preferreddns, notpreferreddns))
-
-            global preferreddns
-            global notpreferreddns
 
             _notpreferreddns = notpreferreddns
             notpreferreddns = preferreddns
@@ -578,154 +594,112 @@ def send_udp(data, host, port):
     return response
 
 
-class AclHandler(FileSystemEventHandler):
+class AclHandler:
 
-    def __init__(self, path, acl_type):
-        self.acl_path = path
+    def __init__(self, redisClient, acl_type):
+        self.redisClient = redisClient
         self.acl_type = acl_type
-        self.acl_file_exists = False
-        if (os.path.exists(path)):
-            self.acl_file_exists = True
+        self.acl = {}
 
     def reload_acl_file(self):
-        try:
-            if (self.acl_type is ACL_SOURCES_TYPE):
-                self.reload_acl_sources_file()
-            elif (self.acl_type is ACL_EXCLUDED_SOURCES_TYPE):
-                self.reload_acl_excluded_sources_file()
-            elif (self.acl_type is ALLOWED_ACL_TYPE):
-                self.reload_acl_targets_file(True)
-            elif (self.acl_type is DISALLOWED_ACL_TYPE):
-                self.reload_acl_targets_file(False)
-        except Exception as e:
-            log("Failed to reload ACL file: %s\n" % e)
+        self.pullAcl()
+        if (self.acl_type is ALLOWED_ACL_TYPE):
+            self.reload_acl_targets_file()
+        elif (self.acl_type is ACL_SOURCES_TYPE):
+            self.reload_acl_sources_file()
+        elif (self.acl_type is ACL_EXCLUDED_SOURCES_TYPE):
+            self.reload_acl_excluded_sources_file()
+
+
+    def pullAcl(self):
+        if (self.acl_type is ALLOWED_ACL_TYPE):
+            self.acl = self.redisClient.get(sshuttleAcl)
+        elif (self.acl_type is ACL_SOURCES_TYPE):
+            self.acl = self.redisClient.get(sshuttleAclSources)
+        elif (self.acl_type is ACL_EXCLUDED_SOURCES_TYPE):
+            self.acl = self.redisClient.get(sshuttleAclExcluded)
+        else:
+            debug1("pullAcl() -> Unsupported ACL type %d\n" % self.acl_type)
+            self.acl = None
 
     def reload_acl_sources_file(self):
         global _allowed_sources
 
-        if (not self.acl_file_exists):
-            _allowed_sources = None
-            return
-        with open(self.acl_path, 'r') as acl:
+        if self.acl is not None:
             try:
-                _new_allowed_sources = json.loads(acl.read())
+                _new_allowed_sources = json.loads(self.acl, "utf-8")
                 _allowed_sources = _new_allowed_sources
             except BaseException as e:
-                debug3("An exception has occurred while loading the sources file: {}\n\n".format(e))
+                debug3("An exception has occurred while loading the sources data: {}\n\n".format(e))
+        else:
+            _allowed_sources = None
 
         debug3("Network Connection Sources ACL \n\n%s" % _allowed_sources)
 
     def reload_acl_excluded_sources_file(self):
+
         global _excluded_sources
 
-        if (not self.acl_file_exists):
-            _excluded_sources = None
-            return
-        with open(self.acl_path, 'r') as acl:
+        if self.acl is not None:
             try:
-                _new_excluded_sources = json.loads(acl.read())
+                _new_excluded_sources = json.loads(self.acl, "utf-8")
                 _excluded_sources = _new_excluded_sources
             except BaseException as e:
-                debug3("An exception has occurred while loading the excluded sources file: {}\n\n".format(e))
+                debug3("An exception has occurred while loading the excluded sources data: {}\n\n".format(e))
+        else:
+            _excluded_sources = None
 
         debug3("Network Connection Excluded Sources ACL \n\n%s" % _excluded_sources)
 
-    def reload_acl_targets_file(self, is_allowed_type):
-        if is_allowed_type:
-            global _allowed_targets
-            _allowed_targets = {}
-            _targets = _allowed_targets
-            if (not self.acl_file_exists):
-                _allowed_targets = None
-                return
+    def reload_acl_targets_file(self):
+
+        global _allowed_targets
+
+        if self.acl is not None:
+            try:
+                _new_targets = json.loads(self.acl, "utf-8")
+                _allowed_targets = _new_targets
+            except BaseException as e:
+                debug3("An exception has occurred while loading the allowed targets (sshuttleAcl) data: {}\n\n".format(e))
         else:
-            global _disallowed_targets
-            _disallowed_targets = {}
-            _targets = _disallowed_targets
-            if (not self.acl_file_exists):
-                _disallowed_targets = None
-                return
+            _allowed_targets = None
 
-        with open(self.acl_path, 'r') as acl:
-            line_format = re.compile("^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}\:\d{1,5}(\-\d{1,5})?$")
-            for line in acl:
-                try:
-                    line = line.strip()
-                    if (not line_format.match(line)):
-                        if (not line.startswith("#")):
-                            log("Invalid acl format [%s]. Should be w.x.y.z/nn:nnnnn-mmmmm\n" % line)
-                        continue
-
-                    acl = line.split(":")
-                    cidr = acl[0]
-                    port = acl[1]
-
-                    if (not cidr in _targets):
-                        _targets[cidr] = []
-                    if (not port in _targets[cidr]):
-                        _targets[cidr].append(port)
-                    else:
-                        log("Duplicate entry [%s]\n" % line)
-                except Exception as e:
-                    log("%s\n" % e)
-
-        if (not _targets):
-            if is_allowed_type:
-                log("Allowed ACL list is empty. Restricting all access\n")
-            else:
-                log("Disallowed ACL list is empty.\n")
+        if (not _allowed_targets):
+            log("Allowed ACL list is empty. Restricting all access\n")
         else:
-            if is_allowed_type:
-                log("Network Connection Allowed ACL \n\n%s" % _allowed_targets)
+            log("Network Connection Allowed ACL \n\n%s" % _allowed_targets)
+
+class ChannelListener(threading.Thread):
+
+    def __init__(self, redisHost, redisPort, channels):
+        threading.Thread.__init__(self)
+        self.redisClient = redis.Redis(host=redisHost, port=redisPort)
+        self.redisPubSub = self.redisClient.pubsub()
+        self.redisPubSub.subscribe(channels)
+
+    def handlePubSubEvent(self, item):
+        acl_type = None
+        if (item['channel'] == sshuttleAclEventsChannel and item['type'] == "message"):
+            if (item['data'] == sshuttleAcl):
+                acl_type = ALLOWED_ACL_TYPE
+            elif (item['data'] == sshuttleAclSources):
+                acl_type = ACL_SOURCES_TYPE
+            elif (item['data'] == sshuttleAclExcluded):
+                acl_type = ACL_EXCLUDED_SOURCES_TYPE
             else:
-                log("Network Connection Disallowed ACL \n\n%s" % _disallowed_targets)
+                debug3("Unsupported ACL type. Channel: %s, Data: %s\n" % (item['channel'], item['data']))
 
-    def on_modified(self, event):
-        # ignore directory operations
-        if (event.is_directory):
-            return
+        if acl_type is not None:
+            AclHandler(self.redisClient, acl_type).reload_acl_file()
 
-        if (event.src_path == self.acl_path):
-            self.reload_acl_file()
+    def reloadAllAcls(self):
+        AclHandler(self.redisClient, ALLOWED_ACL_TYPE).reload_acl_file()
+        AclHandler(self.redisClient, ACL_SOURCES_TYPE).reload_acl_file()
+        AclHandler(self.redisClient, ACL_EXCLUDED_SOURCES_TYPE).reload_acl_file()
 
-    def on_moved(self, event):
-
-        if (event.dest_path == self.acl_path):
-            self.reload_acl_file()
-
-    def on_created(self, event):
-
-        if (event.src_path == self.acl_path):
-            self.acl_file_exists = True
-
-        if (event.src_path == self.acl_path):
-            self.reload_acl_file()
-
-    def on_deleted(self, event):
-
-        if (event.src_path == self.acl_path):
-            self.acl_file_exists = False
-
-        if (event.src_path == self.acl_path):
-            self.reload_acl_file()
-
-def start_acl_watchdog(acl_path, acl_type):
-
-    if (not acl_path or acl_path == ""):
-        return
-
-    acl_dir = os.path.dirname(acl_path);
-
-    if (not os.path.exists(acl_dir)):
-        log("ACL file path does not exist [%s] ... Creating \n" % acl_dir)
-        os.mkdir(acl_path, 0755)
-
-    event_handler = AclHandler(acl_path, acl_type)
-    observer = Observer()
-    observer.schedule(event_handler, path=acl_dir, recursive=False)
-    observer.start()
-
-    event_handler.reload_acl_file()
+    def run(self):
+        for item in self.redisPubSub.listen():
+            self.handlePubSubEvent(item)
 
 
 def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
@@ -846,8 +820,7 @@ def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
 def main(listenip_v6, listenip_v4,
          ssh_cmd, remotename, python, latency_control, dns, nslist,
          method_name, seed_hosts, auto_nets,
-         subnets_include, subnets_exclude, acl_file,
-         disallowed_acl_file, acl_sources_file, acl_excluded_sources_file,
+         subnets_include, subnets_exclude,
          daemon, pidfile):
 
     if daemon:
@@ -1038,12 +1011,13 @@ def main(listenip_v6, listenip_v4,
              redirectport_v6, redirectport_v4, dnsport_v6, dnsport_v4,
              required.udp)
 
-    # start the watchdog for acl files
-    if (acl_file):
-        start_acl_watchdog(acl_file, ALLOWED_ACL_TYPE)
-        start_acl_watchdog(disallowed_acl_file, DISALLOWED_ACL_TYPE)
-        start_acl_watchdog(acl_sources_file, ACL_SOURCES_TYPE)
-        start_acl_watchdog(acl_excluded_sources_file, ACL_EXCLUDED_SOURCES_TYPE)
+    if (REDIS_HOST is None or REDIS_PORT is None):
+        raise Fatal("REDIS_HOST and REDIS_PORT environment variables must both be set!")
+
+    channelSubscriptions = [sshuttleAclEventsChannel]
+    channelListener = ChannelListener(REDIS_HOST, REDIS_PORT, channelSubscriptions)
+    channelListener.reloadAllAcls()
+    channelListener.start()
 
     # start the client process
     try:
