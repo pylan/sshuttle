@@ -20,6 +20,7 @@ from sshuttle.methods import get_method, Features
 import ipaddress
 import threading
 import redis
+import time
 
 _extra_fd = os.open('/dev/null', os.O_RDONLY)
 
@@ -673,9 +674,36 @@ class ChannelListener(threading.Thread):
 
     def __init__(self, redisHost, redisPort, channels):
         threading.Thread.__init__(self)
-        self.redisClient = redis.Redis(host=redisHost, port=redisPort)
+        self.redisHost = redisHost
+        self.redisPort = redisPort
+        self.channels = channels
+        self.redisClient = None
+        self.redisPubSub = None
+        self.running = False
+
+    def connect(self):
+        try:
+            log("Connecting to redis server at %s:%s\n" % (self.redisHost, self.redisPort))
+            self.redisClient = redis.Redis(host=self.redisHost, port=self.redisPort)
+            self.redisClient.ping()
+            log("Connected! (%s:%s)\n" % (self.redisHost, self.redisPort))
+        except redis.ConnectionError as e:
+            log("Error establishing connection to redis server: %s -- retrying\n" % e)
+            time.sleep(2)
+            self.connect()
+
+    def initializePubSub(self):
         self.redisPubSub = self.redisClient.pubsub()
-        self.redisPubSub.subscribe(channels)
+        self.redisPubSub.subscribe(self.channels)
+
+    def initialize(self):
+        self.connect()
+        self.initializePubSub()
+        self.reloadAllAcls()
+
+    def reconnect(self):
+        self.initialize()
+        self.initializeChannelHandlers()
 
     def handlePubSubEvent(self, item):
         acl_type = None
@@ -697,10 +725,16 @@ class ChannelListener(threading.Thread):
         AclHandler(self.redisClient, ACL_SOURCES_TYPE).reload_acl_file()
         AclHandler(self.redisClient, ACL_EXCLUDED_SOURCES_TYPE).reload_acl_file()
 
-    def run(self):
-        for item in self.redisPubSub.listen():
-            self.handlePubSubEvent(item)
+    def initializeChannelHandlers(self):
+        try:
+            for item in self.redisPubSub.listen():
+                self.handlePubSubEvent(item)
+        except redis.ConnectionError as e:
+            log("Something happened with the established redis connection: %s -- reconnecting\n" % e)
+            self.reconnect()
 
+    def run(self):
+        self.initializeChannelHandlers()
 
 def _main(tcp_listener, udp_listener, fw, ssh_cmd, remotename,
           python, latency_control,
@@ -1016,7 +1050,7 @@ def main(listenip_v6, listenip_v4,
 
     channelSubscriptions = [sshuttleAclEventsChannel]
     channelListener = ChannelListener(REDIS_HOST, REDIS_PORT, channelSubscriptions)
-    channelListener.reloadAllAcls()
+    channelListener.initialize()
     channelListener.start()
 
     # start the client process
