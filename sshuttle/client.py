@@ -679,7 +679,6 @@ class ChannelListener(threading.Thread):
         self.channels = channels
         self.redisClient = None
         self.redisPubSub = None
-        self.running = False
 
     def connect(self):
         try:
