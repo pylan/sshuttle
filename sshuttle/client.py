@@ -2,7 +2,6 @@ import socket
 import errno
 import re
 import signal
-import time
 import subprocess as ssubprocess
 import sshuttle.helpers as helpers
 import os
