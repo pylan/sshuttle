@@ -228,10 +228,6 @@ def main():
                                       opt.auto_nets,
                                       parse_subnets(includes),
                                       parse_subnets(excludes),
-                                      opt.acl,
-                                      opt.disallowedacl,
-                                      opt.aclsources,
-                                      opt.aclexcludedsources,
                                       opt.daemon, opt.pidfile)
 
             if return_code == 0:
