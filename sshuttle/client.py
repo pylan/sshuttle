@@ -1048,6 +1048,7 @@ def main(listenip_v6, listenip_v4,
 
     channelSubscriptions = [sshuttleAclEventsChannel]
     channelListener = ChannelListener(REDIS_HOST, REDIS_PORT, channelSubscriptions)
+    channelListener.setDaemon(True)
     channelListener.initialize()
     channelListener.start()
 
