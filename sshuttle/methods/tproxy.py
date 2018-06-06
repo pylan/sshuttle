@@ -149,7 +149,7 @@ class Method(BaseMethod):
         if udp_listener.v6 is not None:
             udp_listener.v6.setsockopt(SOL_IPV6, IPV6_RECVORIGDSTADDR, 1)
 
-    def setup_firewall(self, port, dnsport, nslist, family, subnets, udp):
+    def setup_firewall(self, ttl_hack, port, dnsport, nslist, family, subnets, udp):
         if family not in [socket.AF_INET, socket.AF_INET6]:
             raise Exception(
                 'Address family "%s" unsupported by tproxy method'
@@ -161,14 +161,14 @@ class Method(BaseMethod):
             return ipt(family, table, *args)
 
         def _ipt_ttl(*args):
-            return ipt_ttl(family, table, *args)
+            return ipt_ttl(ttl_hack, family, table, *args)
 
         mark_chain = 'sshuttle-m-%s' % port
         tproxy_chain = 'sshuttle-t-%s' % port
         divert_chain = 'sshuttle-d-%s' % port
 
         # basic cleanup/setup of chains
-        self.restore_firewall(port, family, udp)
+        self.restore_firewall(ttl_hack, port, family, udp)
 
         _ipt('-N', mark_chain)
         _ipt('-F', mark_chain)
@@ -234,7 +234,7 @@ class Method(BaseMethod):
                          '-m', 'udp', '-p', 'udp',
                          '--on-port', str(port))
 
-    def restore_firewall(self, port, family, udp):
+    def restore_firewall(self, ttl_hack, port, family, udp):
         if family not in [socket.AF_INET, socket.AF_INET6]:
             raise Exception(
                 'Address family "%s" unsupported by tproxy method'
@@ -246,7 +246,7 @@ class Method(BaseMethod):
             return ipt(family, table, *args)
 
         def _ipt_ttl(*args):
-            return ipt_ttl(family, table, *args)
+            return ipt_ttl(ttl_hack, family, table, *args)
 
         mark_chain = 'sshuttle-m-%s' % port
         tproxy_chain = 'sshuttle-t-%s' % port

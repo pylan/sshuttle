@@ -234,7 +234,7 @@ def test_setup_firewall_darwin(mock_pf_get_dev, mock_ioctl, mock_pfctl):
     mock_ioctl.reset_mock()
     mock_pfctl.reset_mock()
 
-    method.restore_firewall(1025, 2, False)
+    method.restore_firewall(false, 1025, 2, False)
     assert mock_ioctl.mock_calls == []
     assert mock_pfctl.mock_calls == [
         call('-a sshuttle -F all'),
@@ -315,7 +315,7 @@ def test_setup_firewall_freebsd(mock_pf_get_dev, mock_ioctl, mock_pfctl):
     mock_ioctl.reset_mock()
     mock_pfctl.reset_mock()
 
-    method.restore_firewall(1025, 2, False)
+    method.restore_firewall(false, 1025, 2, False)
     assert mock_ioctl.mock_calls == []
     assert mock_pfctl.mock_calls == [
         call('-a sshuttle -F all'),
@@ -392,7 +392,7 @@ def test_setup_firewall_openbsd(mock_pf_get_dev, mock_ioctl, mock_pfctl):
     mock_ioctl.reset_mock()
     mock_pfctl.reset_mock()
 
-    method.restore_firewall(1025, 2, False)
+    method.restore_firewall(false, 1025, 2, False)
     assert mock_ioctl.mock_calls == []
     assert mock_pfctl.mock_calls == [
         call('-a sshuttle -F all'),
