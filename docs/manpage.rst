@@ -136,10 +136,10 @@ Options
     if you use this option to give it a few names to start
     from.
 
-.. option:: --no-ttl-hack
+.. option:: --ttl-hack
 
-    Do not use the ttl hack that prevents infinite loops when client=server.
-    Only use this option when the client is not on the same host as the server.
+    Use the ttl hack that prevents infinite loops when client=server.
+    Only use this option when the client is on the same host as the server.
 
 .. option:: --no-latency-control
 

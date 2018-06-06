@@ -129,7 +129,7 @@ v,verbose  increase debug message verbosity
 V,version  print the sshuttle version number and exit
 e,ssh-cmd= the command to use to connect to the remote [ssh]
 seed-hosts= with -H, use these hostnames for initial scan (comma-separated)
-no-ttl-hack  remove ttl hack that prevents infinite loops when client is also the server
+ttl-hack  add ttl hack that prevents infinite loops when client is also the server
 no-latency-control  sacrifice latency to improve bandwidth benchmarks
 wrap=      restart counting channel numbers after this number (for testing)
 disable-ipv6 disables ipv6 support
