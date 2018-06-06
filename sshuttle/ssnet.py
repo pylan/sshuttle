@@ -631,10 +631,11 @@ class MuxWrapper(SockWrapper):
                             % (cmd, len(data)))
 
 
-def connect_dst(family, ip, port):
+def connect_dst(ttl_hack, family, ip, port):
     debug2('Connecting to %s:%d\n' % (ip, port))
     outsock = socket.socket(family)
-    outsock.setsockopt(socket.SOL_IP, socket.IP_TTL, 42)
+    if ttl_hack:
+        outsock.setsockopt(socket.SOL_IP, socket.IP_TTL, 42)
     return SockWrapper(outsock, outsock,
                        connect_to=(ip, port),
                        peername = '%s:%d' % (ip, port))

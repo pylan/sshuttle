@@ -33,4 +33,4 @@ sshuttle.helpers.verbose = verbosity
 
 import sshuttle.cmdline_options as options
 from sshuttle.server import main
-main(options.latency_control)
+main(options.ttl_hack, options.latency_control)

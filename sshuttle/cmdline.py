@@ -129,6 +129,7 @@ v,verbose  increase debug message verbosity
 V,version  print the sshuttle version number and exit
 e,ssh-cmd= the command to use to connect to the remote [ssh]
 seed-hosts= with -H, use these hostnames for initial scan (comma-separated)
+ttl-hack  add ttl hack that prevents infinite loops when client is also the server
 no-latency-control  sacrifice latency to improve bandwidth benchmarks
 wrap=      restart counting channel numbers after this number (for testing)
 disable-ipv6 disables ipv6 support
@@ -165,7 +166,7 @@ def main():
         if opt.firewall:
             if len(extra) != 0:
                 o.fatal('exactly zero arguments expected')
-            return firewall.main(opt.method, opt.syslog)
+            return firewall.main(opt.ttl_hack, opt.method, opt.syslog)
         elif opt.hostwatch:
             return hostwatch.hw_main(extra)
         else:
@@ -220,6 +221,7 @@ def main():
                                       opt.ssh_cmd,
                                       remotename,
                                       opt.python,
+                                      opt.ttl_hack,
                                       opt.latency_control,
                                       opt.dns,
                                       nslist,

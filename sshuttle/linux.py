@@ -43,9 +43,9 @@ def ipt(family, table, *args):
 _no_ttl_module = False
 
 
-def ipt_ttl(family, *args):
+def ipt_ttl(ttl_hack, family, *args):
     global _no_ttl_module
-    if not _no_ttl_module:
+    if not _no_ttl_module and ttl_hack:
         # we avoid infinite loops by generating server-side connections
         # with ttl 42.  This makes the client side not recapture those
         # connections, in case client == server.

@@ -122,9 +122,10 @@ class Hostwatch:
 
 class DnsProxy(Handler):
 
-    def __init__(self, mux, chan, request):
+    def __init__(self, ttl_hack, mux, chan, request):
         Handler.__init__(self, [])
         self.timeout = time.time() + 30
+        self.ttl_hack = ttl_hack
         self.mux = mux
         self.chan = chan
         self.tries = 0
@@ -140,7 +141,8 @@ class DnsProxy(Handler):
         family, peer = resolvconf_random_nameserver()
 
         sock = socket.socket(family, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_IP, socket.IP_TTL, 42)
+        if self.ttl_hack:
+            sock.setsockopt(socket.SOL_IP, socket.IP_TTL, 42)
         sock.connect((peer, 53))
 
         self.peers[sock] = peer
@@ -187,14 +189,15 @@ class DnsProxy(Handler):
 
 class UdpProxy(Handler):
 
-    def __init__(self, mux, chan, family):
+    def __init__(self, ttl_hack, mux, chan, family):
         sock = socket.socket(family, socket.SOCK_DGRAM)
         Handler.__init__(self, [sock])
         self.timeout = time.time() + 30
+        self.ttl_hack = ttl_hack
         self.mux = mux
         self.chan = chan
         self.sock = sock
-        if family == socket.AF_INET:
+        if family == socket.AF_INET and self.ttl_hack:
             self.sock.setsockopt(socket.SOL_IP, socket.IP_TTL, 42)
 
     def send(self, dstip, data):
@@ -216,7 +219,7 @@ class UdpProxy(Handler):
         self.mux.send(self.chan, ssnet.CMD_UDP_DATA, hdr + data)
 
 
-def main(latency_control):
+def main(ttl_hack, latency_control):
     debug1('Starting server with Python version %s\n'
            % platform.python_version())
 
@@ -275,7 +278,7 @@ def main(latency_control):
         (family, dstip, dstport) = data.split(b',', 2)
         family = int(family)
         dstport = int(dstport)
-        outwrap = ssnet.connect_dst(family, dstip, dstport)
+        outwrap = ssnet.connect_dst(ttl_hack, family, dstip, dstport)
         handlers.append(Proxy(MuxWrapper(mux, channel), outwrap))
     mux.new_channel = new_channel
 
@@ -283,7 +286,7 @@ def main(latency_control):
 
     def dns_req(channel, data):
         debug2('Incoming DNS request channel=%d.\n' % channel)
-        h = DnsProxy(mux, channel, data)
+        h = DnsProxy(ttl_hack, mux, channel, data)
         handlers.append(h)
         dnshandlers[channel] = h
     mux.got_dns_req = dns_req
@@ -311,7 +314,7 @@ def main(latency_control):
         if channel in udphandlers:
             raise Fatal('UDP connection channel %d already open' % channel)
         else:
-            h = UdpProxy(mux, channel, family)
+            h = UdpProxy(ttl_hack, mux, channel, family)
             handlers.append(h)
             udphandlers[channel] = h
     mux.got_udp_open = udp_open

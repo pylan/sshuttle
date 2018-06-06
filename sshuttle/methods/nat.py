@@ -12,7 +12,7 @@ class Method(BaseMethod):
     # the multiple copies shouldn't have overlapping subnets, or only the most-
     # recently-started one will win (because we use "-I OUTPUT 1" instead of
     # "-A OUTPUT").
-    def setup_firewall(self, port, dnsport, nslist, family, subnets, udp):
+    def setup_firewall(self, ttl_hack, port, dnsport, nslist, family, subnets, udp):
         # only ipv4 supported with NAT
         if family != socket.AF_INET:
             raise Exception(
@@ -27,12 +27,12 @@ class Method(BaseMethod):
             return ipt(family, table, *args)
 
         def _ipt_ttl(*args):
-            return ipt_ttl(family, table, *args)
+            return ipt_ttl(ttl_hack, family, table, *args)
 
         chain = 'sshuttle-%s' % port
 
         # basic cleanup/setup of chains
-        self.restore_firewall(port, family, udp)
+        self.restore_firewall(ttl_hack, port, family, udp)
 
         _ipt('-N', chain)
         _ipt('-F', chain)
@@ -77,7 +77,7 @@ class Method(BaseMethod):
                      '--dport', '53',
                      '--to-ports', str(dnsport))
 
-    def restore_firewall(self, port, family, udp):
+    def restore_firewall(self, ttl_hack, port, family, udp):
         # only ipv4 supported with NAT
         if family != socket.AF_INET:
             raise Exception(
@@ -92,7 +92,7 @@ class Method(BaseMethod):
             return ipt(family, table, *args)
 
         def _ipt_ttl(*args):
-            return ipt_ttl(family, table, *args)
+            return ipt_ttl(ttl_hack, family, table, *args)
 
         chain = 'sshuttle-%s' % port
 
