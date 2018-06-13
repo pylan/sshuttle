@@ -37,7 +37,7 @@ class Method(BaseMethod):
         _ipt('-N', chain)
         _ipt('-F', chain)
         _ipt('-I', 'OUTPUT', '1', '-j', chain)
-        _ipt('-I', 'PREROUTING', '1', '-j', chain)
+        _ipt('-I', 'PREROUTING', '2', '-j', chain)
 
         # get the address of eth0
         ni.ifaddresses('eth0')
